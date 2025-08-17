@@ -137,20 +137,64 @@ export function mergeFichas(nuevas, modo="add") {
 
 
 export function mergeExamenes(nuevas, modo="add") {
-  const actuales = modo === "replace" ? [] : getBancoExamenes();
-  const idx = new Map();
-  for (const q of actuales) {
-    idx.set(q.id || `${q.enunciado}||${q.tema}`, q);
+  console.debug("[mergeExamenes] START modo=", modo, "nuevas=", Array.isArray(nuevas) ? nuevas.length : -1);
+  if (!Array.isArray(nuevas)) nuevas = [];
+
+  const actuales = (modo === "replace") ? [] : getBancoExamenes();
+  console.debug("[mergeExamenes] actuales=", actuales.length);
+
+  // Normalizador mínimo
+  const norm = (q) => ({
+    id: q?.id ?? genId(),
+    tema: (q?.tema ?? "").trim(),
+    dificultad: String(q?.dificultad ?? "").trim(),
+    enunciado: (q?.enunciado ?? "").trim(),
+    opciones: Array.isArray(q?.opciones) ? q.opciones.map(x => (x ?? "").trim()) : ["","","",""],
+    correcta: String(q?.correcta ?? "").trim() // 1..4
+  });
+
+  // 👉 Caso 1: modo replace —> guardamos tal cual, SIN dedupe
+  if (modo === "replace") {
+    const soloNuevas = nuevas.map(norm);
+    saveJSON("banco_examenes_v1", soloNuevas);
+    window.dispatchEvent(new Event("rx-bancos-actualizados"));
+    console.debug("[mergeExamenes] REPLACE -> resultado=", soloNuevas.length);
+    return soloNuevas;
   }
-  for (const q of nuevas) {
-    const key = q.id || `${q.enunciado}||${q.tema}`;
-    idx.set(key, q);
+
+  // 👉 Caso 2: banco vacío —> primera carga, SIN dedupe
+  if (Array.isArray(actuales) && actuales.length === 0) {
+    const soloNuevas = nuevas.map(norm);
+    saveJSON("banco_examenes_v1", soloNuevas);
+    window.dispatchEvent(new Event("rx-bancos-actualizados"));
+    console.debug("[mergeExamenes] ADD(base vacía) -> resultado=", soloNuevas.length);
+    return soloNuevas;
   }
-  const res = Array.from(idx.values());
-  setBancoExamenes(res);
+
+  // 👉 Caso 3: hay base y añadimos —> dedupe con clave compuesta ROBUSTA
+  const base = actuales.map(norm);
+  const incoming = nuevas.map(norm);
+
+  const keyOf = (q) => [
+    q.tema.toLowerCase(),
+    q.dificultad.toLowerCase(),
+    q.enunciado.toLowerCase(),
+    ...q.opciones.map(o => o.toLowerCase()),
+    q.correcta
+  ].join("§");
+
+  const mapa = new Map();
+  for (const q of base)     mapa.set(keyOf(q), q);
+  for (const q of incoming) mapa.set(keyOf(q), q);
+
+  const res = Array.from(mapa.values());
+  saveJSON("banco_examenes_v1", res);
   window.dispatchEvent(new Event("rx-bancos-actualizados"));
+  console.debug("[mergeExamenes] ADD(con dedupe) -> resultado=", res.length);
   return res;
 }
+
+
 
 /* =============== Efectivos (banco o estáticos) =============== */
 export function getFichasEfectivas(staticFichas = []) {
